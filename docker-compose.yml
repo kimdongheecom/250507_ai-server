@@ -1,0 +1,66 @@
+services:
+  titanic-service:
+      build: ./titanic-service
+      ports:
+        - "9000:9000"
+      env_file:
+        - ./titanic-service/.env
+      environment:
+        - PYTHONUNBUFFERED=1
+      restart: always
+
+  crime-service:
+    build: ./crime-service
+    ports:
+      - "9002:9002"
+    volumes:
+      - ./crime-service/app:/app/app
+      - ./crime-service/requirements.txt:/app/requirements.txt
+    env_file:
+      - ./crime-service/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: always
+
+  nlp-service:
+    build: ./nlp-service
+    ports:
+      - "9003:9003"
+    volumes:
+      - ./nlp-service/app:/app/app
+      - ./nlp-service/requirements.txt:/app/requirements.txt
+    env_file:
+      - ./nlp-service/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: always
+
+  tf-service:
+    build: ./tf-service
+    ports:
+      - "9004:9004"
+    volumes:
+      - ./tf-service/app:/app/app
+      - ./tf-service/requirements.txt:/app/requirements.txt
+      - ./tf-service/uploads:/app/uploads
+      - ./tf-service/output:/app/output
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: always
+
+  gateway:
+    build: ./gateway
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./gateway:/app
+    env_file:
+      - ./gateway/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: always
+    depends_on:
+      - titanic-service
+      - crime-service
+      - nlp-service
+      - tf-service

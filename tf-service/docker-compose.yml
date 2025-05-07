@@ -1,0 +1,14 @@
+services:
+  tf-service:
+    build: .
+    ports:
+      - "7070:7070"
+    volumes:
+      - ./app:/app/app
+      - ./requirements.txt:/app/requirements.txt
+      - ./uploads:/app/uploads
+      - ./output:/app/output
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: always
+    container_name: tf-service

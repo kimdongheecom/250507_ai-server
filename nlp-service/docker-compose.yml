@@ -1,0 +1,15 @@
+
+
+services:
+  nlp-test:
+    build: .
+    ports:
+      - "7000:7000"
+    volumes:
+      - ./app:/app/app
+      - ./requirements.txt:/app/requirements.txt
+      - ./output:/app/output
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: always
+    container_name: nlp-service-nlp-test 
