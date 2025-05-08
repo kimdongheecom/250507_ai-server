@@ -273,6 +273,7 @@ async def read_mnist_image_endpoint(
 ):
     """
     MNIST 이미지를 데이터셋에서 읽거나 파일에서 로드합니다.
+    딥러닝 모델을 사용하여 숫자를 인식하고 결과를 반환합니다.
     
     **Query Parameters**:
     - **index**: MNIST 데이터셋의 인덱스 (0-59999)
@@ -282,11 +283,14 @@ async def read_mnist_image_endpoint(
     """
     logger.info(f"MNIST 이미지 읽기 요청 시작: index={index}, filepath={filepath}")
     try:
-        # 파라미터 확인
+        # 파라미터 확인 - 둘 다 없는 경우 에러
         if index is None and filepath is None:
             logger.error("필수 파라미터 누락: index 또는 filepath가 제공되지 않음")
             return JSONResponse(
-                content={"error": "index 또는 filepath 중 하나는 반드시 제공해야 합니다."},
+                content={
+                    "error": "index 또는 filepath 중 하나는 반드시 제공해야 합니다.",
+                    "usage": {"index": "MNIST 데이터셋 인덱스 (0-59999)", "filepath": "읽을 이미지 파일 경로 (upload 디렉토리 기준)"}
+                },
                 status_code=400
             )
             
@@ -324,8 +328,8 @@ async def read_mnist_image_endpoint(
             
         # 컨트롤러 호출
         logger.info(f"컨트롤러 호출 전: index={index}, filepath={file_path}")
-        image, label, success, error_msg = read_mnist_image(index=index, filepath=file_path)
-        logger.info(f"컨트롤러 응답: success={success}, label={label}, error_msg={error_msg}")
+        image, digit_or_label, success, error_msg = read_mnist_image(index=index, filepath=file_path)
+        logger.info(f"컨트롤러 응답: success={success}, digit_or_label={digit_or_label}, error_msg={error_msg}")
         
         if not success:
             logger.error(f"이미지 읽기 실패: {error_msg}")
@@ -333,6 +337,21 @@ async def read_mnist_image_endpoint(
                 content={"error": error_msg},
                 status_code=400
             )
+            
+        # 콘솔에 결과 출력
+        if filepath and digit_or_label is not None:
+            # 파일에서 읽은 경우 - 딥러닝 모델 예측 결과
+            print("\n" + "="*50)
+            print(f"🔢 딥러닝 모델이 예측한 숫자: {digit_or_label}")
+            print(f"📄 파일명: {filepath}")
+            print("="*50 + "\n")
+            logger.info(f"딥러닝 모델 예측 결과: 이미지 '{filepath}'의 숫자는 {digit_or_label}")
+        elif index is not None and digit_or_label is not None:
+            # MNIST 데이터셋의 레이블
+            print("\n" + "="*50)
+            print(f"🔢 MNIST 데이터셋 인덱스 {index}의 실제 레이블: {digit_or_label}")
+            print("="*50 + "\n")
+            logger.info(f"MNIST 데이터셋 레이블: {digit_or_label} (인덱스: {index})")
         
         # 이미지를 PNG로 저장
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -340,10 +359,11 @@ async def read_mnist_image_endpoint(
         if filepath:
             # 업로드된 파일 이름 사용
             filename_base = os.path.splitext(os.path.basename(filepath))[0]
-            output_filename = f"{filename_base}_processed_{timestamp}.png"
+            digit_suffix = f"_digit{digit_or_label}" if digit_or_label is not None else ""
+            output_filename = f"{filename_base}{digit_suffix}_processed_{timestamp}.png"
         else:
             # MNIST 인덱스 사용
-            label_str = f"_label{label}" if label is not None else ""
+            label_str = f"_label{digit_or_label}" if digit_or_label is not None else ""
             output_filename = f"mnist_{index}{label_str}_{timestamp}.png"
             
         # 출력 디렉토리 및 파일 경로
@@ -356,8 +376,11 @@ async def read_mnist_image_endpoint(
         plt.figure(figsize=(5, 5))
         plt.imshow(image, cmap='gray')
         plt.axis('off')
-        if label is not None:
-            plt.title(f"Label: {label}")
+        if digit_or_label is not None:
+            if filepath:
+                plt.title(f"Predicted: {digit_or_label}")
+            else:
+                plt.title(f"Label: {digit_or_label}")
         plt.savefig(output_path, bbox_inches='tight', pad_inches=0)
         plt.close()
         
@@ -367,10 +390,18 @@ async def read_mnist_image_endpoint(
         response_data = {
             "success": True,
             "image_path": output_path,
-            "label": label,
-            "image_shape": image.shape,
+            "image_shape": tuple(int(x) for x in image.shape),  # numpy.int64를 int로 변환
             "source": "dataset" if filepath is None else "file"
         }
+        
+        # 결과에 따라 필드 추가
+        if filepath is not None:
+            response_data["original_filename"] = filepath
+            response_data["recognized_digit"] = int(digit_or_label) if digit_or_label is not None else None
+        else:
+            response_data["mnist_index"] = index
+            response_data["actual_label"] = int(digit_or_label) if digit_or_label is not None else None
+        
         logger.info(f"응답 데이터 준비 완료: {response_data}")
         return response_data
         
@@ -388,6 +419,7 @@ async def upload_and_read_mnist_image(
 ):
     """
     이미지 파일을 업로드하고 바로 MNIST 형식(28x28)으로 변환하여 읽습니다.
+    딥러닝 모델을 사용하여 숫자를 인식하고 결과를 반환합니다.
     """
     logger.info(f"파일 업로드 및 MNIST 변환 요청 시작: filename={file.filename}")
     try:
@@ -401,8 +433,8 @@ async def upload_and_read_mnist_image(
         
         # 컨트롤러 호출
         logger.info(f"컨트롤러 호출 전: filepath={file_location}")
-        image, label, success, error_msg = read_mnist_image(filepath=file_location)
-        logger.info(f"컨트롤러 응답: success={success}, error_msg={error_msg}")
+        image, predicted_digit, success, error_msg = read_mnist_image(filepath=file_location)
+        logger.info(f"컨트롤러 응답: success={success}, predicted_digit={predicted_digit}, error_msg={error_msg}")
         
         if not success:
             logger.error(f"이미지 처리 실패: {error_msg}")
@@ -411,10 +443,20 @@ async def upload_and_read_mnist_image(
                 status_code=400
             )
         
+        # 콘솔에 딥러닝 모델이 예측한 숫자 출력
+        # 이제 휴리스틱 알고리즘이 아닌 실제 딥러닝 모델의 예측 결과
+        if predicted_digit is not None:
+            print("\n" + "="*50)
+            print(f"🔢 딥러닝 모델이 예측한 숫자: {predicted_digit}")
+            print(f"📄 파일명: {file.filename}")
+            print("="*50 + "\n")
+            logger.info(f"딥러닝 모델 예측 결과: 이미지 '{file.filename}'의 숫자는 {predicted_digit}")
+        
         # 이미지를 PNG로 저장
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         filename_base = os.path.splitext(file.filename)[0]
-        output_filename = f"{filename_base}_mnist_format_{timestamp}.png"
+        digit_suffix = f"_digit{predicted_digit}" if predicted_digit is not None else ""
+        output_filename = f"{filename_base}{digit_suffix}_mnist_format_{timestamp}.png"
         logger.info(f"출력 파일명: {output_filename}")
             
         # 출력 디렉토리 및 파일 경로
@@ -427,6 +469,8 @@ async def upload_and_read_mnist_image(
         plt.figure(figsize=(5, 5))
         plt.imshow(image, cmap='gray')
         plt.axis('off')
+        if predicted_digit is not None:
+            plt.title(f"Predicted: {predicted_digit}")
         plt.savefig(output_path, bbox_inches='tight', pad_inches=0)
         plt.close()
         
@@ -438,7 +482,8 @@ async def upload_and_read_mnist_image(
             "original_filename": file.filename,
             "uploaded_path": file_location,
             "processed_path": output_path,
-            "image_shape": image.shape
+            "image_shape": tuple(int(x) for x in image.shape),  # numpy.int64를 int로 변환
+            "recognized_digit": int(predicted_digit) if predicted_digit is not None else None
         }
         logger.info(f"응답 데이터 준비 완료: {response_data}")
         return response_data

@@ -19,6 +19,90 @@ class MnistService:
         # MNIST 데이터 로드
         self.mnist = keras.datasets.mnist
         (self.train_images, self.train_labels), (self.test_images, self.test_labels) = self.mnist.load_data()
+        
+        # MNIST 모델 로드 또는 생성
+        self.model = self._load_or_create_model()
+        logger.info("MNIST 모델 초기화 완료")
+
+    def _load_or_create_model(self):
+        """MNIST 분류 모델을 로드하거나 새로 생성합니다."""
+        # 모델 저장 경로
+        model_path = os.path.join(self.output_dir, 'mnist_model.h5')
+        
+        # 저장된 모델이 있으면 로드
+        if os.path.exists(model_path):
+            logger.info(f"저장된 모델 로드: {model_path}")
+            return keras.models.load_model(model_path)
+        
+        # 없으면 새로 모델 생성 및 학습
+        logger.info("새 MNIST 모델 생성 및 학습 시작")
+        
+        # 데이터 정규화
+        train_images = self.train_images / 255.0
+        test_images = self.test_images / 255.0
+        
+        # 간단한 CNN 모델 구성
+        model = keras.Sequential([
+            keras.layers.InputLayer(input_shape=(28, 28, 1)),
+            keras.layers.Reshape(target_shape=(28, 28, 1)),
+            keras.layers.Conv2D(32, kernel_size=(3, 3), activation='relu'),
+            keras.layers.MaxPooling2D(pool_size=(2, 2)),
+            keras.layers.Conv2D(64, kernel_size=(3, 3), activation='relu'),
+            keras.layers.MaxPooling2D(pool_size=(2, 2)),
+            keras.layers.Flatten(),
+            keras.layers.Dropout(0.5),
+            keras.layers.Dense(10, activation='softmax')
+        ])
+        
+        # 모델 컴파일
+        model.compile(
+            optimizer='adam',
+            loss='sparse_categorical_crossentropy',
+            metrics=['accuracy']
+        )
+        
+        # 모델 학습
+        train_images = train_images.reshape((-1, 28, 28, 1))
+        test_images = test_images.reshape((-1, 28, 28, 1))
+        
+        model.fit(
+            train_images, self.train_labels,
+            epochs=3,
+            batch_size=128,
+            validation_data=(test_images, self.test_labels),
+            verbose=1
+        )
+        
+        # 모델 평가
+        test_loss, test_acc = model.evaluate(test_images, self.test_labels, verbose=2)
+        logger.info(f"모델 정확도: {test_acc:.4f}")
+        
+        # 모델 저장
+        model.save(model_path)
+        logger.info(f"학습된 모델 저장: {model_path}")
+        
+        return model
+
+    def predict_digit(self, image):
+        """이미지에서 숫자를 예측합니다."""
+        if image is None:
+            logger.error("예측할 이미지가 없습니다.")
+            return None, 0.0
+            
+        # 이미지 전처리 (정규화 및 차원 변경)
+        processed_image = image.astype('float32') / 255.0
+        processed_image = processed_image.reshape(1, 28, 28, 1)
+        
+        # 예측 수행
+        predictions = self.model.predict(processed_image, verbose=0)
+        predicted_digit = np.argmax(predictions[0])
+        confidence = float(predictions[0][predicted_digit])
+        
+        # numpy.int64를 기본 Python int로 변환 (JSON 직렬화 가능하도록)
+        predicted_digit = int(predicted_digit)
+        
+        logger.info(f"예측 결과: 숫자 {predicted_digit}, 확률: {confidence:.4f}")
+        return predicted_digit, confidence
 
     def get_mnist_data(self, index=100):
         """지정된 인덱스의 MNIST 데이터 정보를 반환합니다."""
@@ -38,7 +122,7 @@ class MnistService:
         Returns:
             이미지가 성공적으로 로드된 경우:
                 - dataset 사용 시: (image, label, True, "")
-                - 파일 사용 시: (image, None, True, "")
+                - 파일 사용 시: (image, predicted_digit, True, "")
             실패한 경우:
                 - (None, None, False, error_message)
         """
@@ -77,8 +161,12 @@ class MnistService:
                     # resized_image = 255 - resized_image  # 배경은 검은색, 숫자는 흰색으로
                     pass
                 
+                # 숫자 예측
+                predicted_digit, confidence = self.predict_digit(resized_image)
+                logger.info(f"서비스: 숫자 인식 결과 - 숫자: {predicted_digit}, 확률: {confidence:.4f}")
+                
                 logger.info(f"서비스: 외부 이미지 파일 처리 완료: {filepath}")
-                return resized_image, None, True, ""
+                return resized_image, predicted_digit, True, ""
                 
             except Exception as e:
                 logger.error(f"서비스: 이미지 처리 중 오류 발생: {str(e)}")
@@ -98,6 +186,11 @@ class MnistService:
                 image = self.train_images[index]
                 label = int(self.train_labels[index])
                 logger.info(f"서비스: MNIST 데이터셋에서 인덱스 {index}의 이미지 로드 완료 (레이블: {label})")
+                
+                # 데이터셋 이미지도 예측해보기 (레이블과 비교용)
+                predicted_digit, confidence = self.predict_digit(image)
+                logger.info(f"서비스: 데이터셋 이미지 예측 - 레이블: {label}, 예측: {predicted_digit}, 확률: {confidence:.4f}")
+                
                 return image, label, True, ""
                 
             except Exception as e:
